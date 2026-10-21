@@ -3,7 +3,7 @@ import {
   CSRF_COOKIE,
   CSRF_HEADER,
   generateCsrfToken,
-  SECURITY_HEADERS,
+  securityHeaders,
 } from "@/lib/security";
 
 function isSecureRequest(req: NextRequest): boolean {
@@ -37,7 +37,7 @@ export function middleware(req: NextRequest) {
     request: { headers: requestHeaders },
   });
 
-  for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+  for (const [k, v] of Object.entries(securityHeaders(isSecureRequest(req)))) {
     res.headers.set(k, v);
   }
 

@@ -37,6 +37,23 @@ export function validateCsrf(cookieToken: string | null, formToken: string | nul
   return out === 0;
 }
 
+export function clickBodyTooLarge(req: Request): boolean {
+  const raw = req.headers.get("content-length");
+  if (!raw) return false;
+  const len = Number(raw);
+  return Number.isFinite(len) && len > 1024;
+}
+
+const BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|headless/i;
+
+/** Skip page-view and click counting for crawlers, link previews, and prefetch. */
+export function isLikelyBot(headers: Headers): boolean {
+  const ua = headers.get("user-agent") || "";
+  if (BOT_UA.test(ua)) return true;
+  const purpose = `${headers.get("purpose") || ""} ${headers.get("sec-purpose") || ""}`.toLowerCase();
+  return purpose.includes("prefetch");
+}
+
 export function isSecureRequestFromHeaders(h: Headers): boolean {
   const proto = h.get("x-forwarded-proto");
   if (proto === "https") return true;
@@ -56,8 +73,15 @@ export const SECURITY_HEADERS: Record<string, string> = {
     "img-src 'self' data: https: blob:",
     "font-src 'self' data:",
     "connect-src 'self'",
+    "object-src 'none'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
   ].join("; "),
 };
+
+export function securityHeaders(secure: boolean): Record<string, string> {
+  const headers: Record<string, string> = { ...SECURITY_HEADERS };
+  if (secure) headers["Strict-Transport-Security"] = "max-age=31536000";
+  return headers;
+}

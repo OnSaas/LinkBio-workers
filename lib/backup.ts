@@ -496,12 +496,12 @@ export async function applyBackupJson(
       return { ok: false, error: errCode("invalid_json") };
     }
     const clean = stripForbiddenSecrets(parsed);
+    // Remote restore must not rewrite how we connect to the backup source.
     await store.importAll({
       profile: clean.profile as never,
       links: clean.links as never,
       settings: clean.settings as never,
       analytics: clean.analytics as never,
-      backup: clean.backup as never,
     });
     return { ok: true, error: "" };
   } catch (e) {

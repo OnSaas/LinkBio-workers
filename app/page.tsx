@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
-import { cookies, headers } from "next/headers";
 import { ProfileCard } from "@/components/public/profile-card";
 import { LinkList } from "@/components/public/link-list";
 import { SiteFooter } from "@/components/public/site-footer";
 import { ThemeToolbar } from "@/components/public/theme-toolbar";
 import { isAdminSession } from "@/lib/auth";
-import { getEnv, getStore, waitUntil } from "@/lib/env";
+import { getEnv, getLinks, getProfile, getRequestPrefs, getSettings, getStore } from "@/lib/data";
+import { waitUntil } from "@/lib/env";
+import { isLikelyBot } from "@/lib/security";
+import { publicPageMetadata } from "@/lib/seo";
 import { createT, htmlLang } from "@/lib/i18n";
-import { resolveColorMode, resolveLocale } from "@/lib/prefs";
 import { getTheme, resolveThemeId } from "@/lib/themes";
 import { buildThemeColorOverrideCss, resolveColorSeed } from "@/lib/theme-colors";
 import { cn } from "@/lib/utils";
@@ -22,34 +23,22 @@ function truncateName(name: string, max = 40): string {
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
-    const store = await getStore();
     const env = await getEnv();
-    const profile = await store.getProfile();
-    const settings = await store.getSettings();
+    const profile = await getProfile();
+    const settings = await getSettings();
     const siteName = env.SITE_NAME || "LinkBio";
     const name = truncateName(profile.name || "");
     // absolute avoids root layout default/template overriding page title
     const displayTitle = name ? `${name}-LinkBio` : siteName;
-
-    const jar = await cookies();
-    const hdrs = await headers();
-    const cookieHeader = jar
-      .getAll()
-      .map((c) => `${c.name}=${encodeURIComponent(c.value)}`)
-      .join("; ");
-    const { locale } = resolveLocale(
-      cookieHeader,
-      hdrs.get("accept-language") || undefined,
-      settings.locale,
-    );
+    const { locale } = await getRequestPrefs(settings);
     const description = createT(locale)("public.metaDescription", { siteName });
-    return {
-      title: { absolute: displayTitle },
+    return publicPageMetadata({
+      title: displayTitle,
       description,
-      icons: {
-        icon: [{ url: "/icon", type: "image/svg+xml" }],
-      },
-    };
+      siteName,
+      siteUrl: env.SITE_URL,
+      avatar: profile.avatar || "",
+    });
   } catch {
     return {
       title: { absolute: "LinkBio" },
@@ -61,29 +50,15 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function PublicPage() {
-  const store = await getStore();
   const env = await getEnv();
+  const store = await getStore();
   const siteName = env.SITE_NAME || "LinkBio";
-  const [profile, links, settings] = await Promise.all([
-    store.getProfile(),
-    store.getLinks(),
-    store.getSettings(),
-  ]);
+  const [profile, links, settings] = await Promise.all([getProfile(), getLinks(), getSettings()]);
+  const { colorMode, localePref, locale, hdrs } = await getRequestPrefs(settings);
 
-  await waitUntil(store.incrementPageViews());
-
-  const jar = await cookies();
-  const hdrs = await headers();
-  const cookieHeader = jar
-    .getAll()
-    .map((c) => `${c.name}=${encodeURIComponent(c.value)}`)
-    .join("; ");
-  const colorMode = resolveColorMode(cookieHeader, settings.colorMode);
-  const { pref: localePref, locale } = resolveLocale(
-    cookieHeader,
-    hdrs.get("accept-language") || undefined,
-    settings.locale,
-  );
+  if (!isLikelyBot(hdrs)) {
+    await waitUntil(store.incrementPageViews());
+  }
   const themeId = resolveThemeId(settings.theme, env.DEFAULT_THEME);
   const theme = getTheme(themeId);
   const t = createT(locale);
@@ -100,7 +75,6 @@ export default async function PublicPage() {
       {dynamicColorCss ? (
         <style
           id="theme-color-override"
-          // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: dynamicColorCss }}
         />
       ) : null}

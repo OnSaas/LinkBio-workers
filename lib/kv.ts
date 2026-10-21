@@ -31,7 +31,8 @@ import {
  * - Cloudflare KV is eventually consistent: concurrent increments can still
  *   lose updates under high contention. For a personal bio page this is
  *   usually acceptable. For strict accuracy, move counters to a Durable Object.
- * - Increments retry a few times on conflicting re-reads.
+ * - Each increment is one getWithMetadata plus one put. The count and timestamp
+ *   live in metadata; the body stays a decimal string for older readers.
  */
 export class BioStore {
   constructor(private readonly kv: KVNamespace) {}
@@ -71,20 +72,21 @@ export class BioStore {
    * Aggregate analytics from split keys; migrate legacy blob if present.
    */
   async getAnalytics(): Promise<Analytics> {
-    const [pvRaw, updatedRaw, legacy] = await Promise.all([
-      this.kv.get(KV_KEYS.ANALYTICS_PV, "text"),
+    const [pvGot, updatedRaw, legacy] = await Promise.all([
+      this.kv.getWithMetadata<CounterMeta>(KV_KEYS.ANALYTICS_PV, "text"),
       this.kv.get(KV_KEYS.ANALYTICS_UPDATED, "text"),
       this.getJson<Analytics>(KV_KEYS.ANALYTICS),
     ]);
+    const listed = await this.listClickCounters();
+    const hasSplit = pvGot.value !== null || updatedRaw !== null || listed.keysSeen > 0;
 
-    // Prefer split keys when any exist
-    if (pvRaw !== null || updatedRaw !== null) {
-      const pageViews = parseNonNegInt(pvRaw, 0);
-      const linkClicks = await this.listClickCounters();
+    if (hasSplit) {
+      const times = listed.times.slice();
+      if (typeof pvGot.metadata?.t === "string" && pvGot.metadata.t) times.push(pvGot.metadata.t);
       return {
-        pageViews,
-        linkClicks,
-        lastUpdated: updatedRaw || new Date(0).toISOString(),
+        pageViews: counterValue(pvGot.value, pvGot.metadata),
+        linkClicks: listed.clicks,
+        lastUpdated: maxIso(times) || updatedRaw || new Date(0).toISOString(),
       };
     }
 
@@ -187,13 +189,24 @@ export class BioStore {
     if (data.links) ops.push(this.setLinks(data.links.map(sanitizeLink)));
     if (data.settings) ops.push(this.setSettings(sanitizeSettings(data.settings)));
     if (data.analytics) ops.push(this.setAnalytics(sanitizeAnalytics(data.analytics)));
-    if (data.backup) ops.push(this.setBackupConfig(sanitizeBackupConfig(data.backup)));
+    if (data.backup) ops.push(this.importBackupConfig(data.backup));
     await Promise.all(ops);
   }
 
   /**
-   * Increment page views with short retry to reduce lost updates.
-   * Still eventually consistent under concurrent writers �?see class docs.
+   * Merge a backup document into KV. Blank webdav password / gist token keep
+   * the credentials already stored, so a secret-stripped export cannot wipe them.
+   */
+  private async importBackupConfig(input: Partial<BackupConfig>): Promise<void> {
+    const incoming = sanitizeBackupConfig(input);
+    const existing = await this.getBackupConfig();
+    if (!incoming.webdav.password) incoming.webdav.password = existing.webdav.password;
+    if (!incoming.gist.token) incoming.gist.token = existing.gist.token;
+    await this.setBackupConfig(incoming);
+  }
+
+  /**
+   * Increment page views. Eventually consistent under concurrent writers; see class docs.
    */
   async incrementPageViews(): Promise<void> {
     await this.incrementCounter(KV_KEYS.ANALYTICS_PV);
@@ -203,6 +216,13 @@ export class BioStore {
     const safeId = linkId.replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 64);
     if (!safeId) return;
     await this.incrementCounter(`${KV_KEYS.ANALYTICS_CLICK_PREFIX}${safeId}`);
+  }
+
+  /** Remove the click counter for a deleted link. Missing keys are fine. */
+  async deleteLinkClicks(linkId: string): Promise<void> {
+    const safeId = linkId.replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 64);
+    if (!safeId) return;
+    await this.kv.delete(`${KV_KEYS.ANALYTICS_CLICK_PREFIX}${safeId}`);
   }
 
   // ── Login rate limit ──────────────────────────────────────────
@@ -246,30 +266,25 @@ export class BioStore {
 
   // ── Internals ─────────────────────────────────────────────────
 
-  private async incrementCounter(key: string, retries = 3): Promise<void> {
-    for (let i = 0; i < retries; i++) {
-      const raw = await this.kv.get(key, "text");
-      const current = parseNonNegInt(raw, 0);
-      const next = current + 1;
-      await this.kv.put(key, String(next));
-      // Best-effort verify; if another writer won, retry
-      const verify = parseNonNegInt(await this.kv.get(key, "text"), 0);
-      if (verify >= next) {
-        await this.kv.put(KV_KEYS.ANALYTICS_UPDATED, new Date().toISOString());
-        return;
-      }
-    }
-    // Last attempt without verify
-    const raw = await this.kv.get(key, "text");
-    await this.kv.put(key, String(parseNonNegInt(raw, 0) + 1));
-    await this.kv.put(KV_KEYS.ANALYTICS_UPDATED, new Date().toISOString());
+  private async incrementCounter(key: string): Promise<void> {
+    const got = await this.kv.getWithMetadata<CounterMeta>(key, "text");
+    const next = counterValue(got.value, got.metadata) + 1;
+    const t = new Date().toISOString();
+    await this.kv.put(key, String(next), { metadata: { n: next, t } });
   }
 
-  private async listClickCounters(): Promise<Record<string, number>> {
+  private async listClickCounters(): Promise<{
+    clicks: Record<string, number>;
+    times: string[];
+    keysSeen: number;
+  }> {
     const clicks: Record<string, number> = {};
+    const times: string[] = [];
+    const missing: string[] = [];
+    let keysSeen = 0;
     let cursor: string | undefined;
     do {
-      const page = await this.kv.list({
+      const page = await this.kv.list<CounterMeta>({
         prefix: KV_KEYS.ANALYTICS_CLICK_PREFIX,
         cursor,
         limit: 1000,
@@ -277,29 +292,49 @@ export class BioStore {
       for (const key of page.keys) {
         const id = key.name.slice(KV_KEYS.ANALYTICS_CLICK_PREFIX.length);
         if (!id) continue;
-        const v = parseNonNegInt(await this.kv.get(key.name, "text"), 0);
-        if (v > 0) clicks[id] = v;
+        keysSeen += 1;
+        const meta = key.metadata;
+        if (meta && typeof meta.n === "number") {
+          if (meta.n > 0) clicks[id] = Math.floor(meta.n);
+          if (typeof meta.t === "string" && meta.t) times.push(meta.t);
+        } else {
+          missing.push(key.name);
+        }
       }
       cursor = page.list_complete ? undefined : page.cursor;
     } while (cursor);
-    return clicks;
+
+    for (let i = 0; i < missing.length; i += 50) {
+      const batch = missing.slice(i, i + 50);
+      const values = await Promise.all(batch.map((name) => this.kv.get(name, "text")));
+      batch.forEach((name, index) => {
+        const id = name.slice(KV_KEYS.ANALYTICS_CLICK_PREFIX.length);
+        const count = parseNonNegInt(values[index] ?? null, 0);
+        if (count > 0) clicks[id] = count;
+      });
+    }
+    return { clicks, times, keysSeen };
   }
 
   private async persistSplitAnalytics(analytics: Analytics): Promise<void> {
     const keep = new Set<string>();
+    const t = analytics.lastUpdated || new Date().toISOString();
+    const pageViews = Math.max(0, Math.floor(analytics.pageViews));
     const ops: Promise<unknown>[] = [
-      this.kv.put(KV_KEYS.ANALYTICS_PV, String(analytics.pageViews)),
-      this.kv.put(KV_KEYS.ANALYTICS_UPDATED, analytics.lastUpdated || new Date().toISOString()),
+      this.kv.put(KV_KEYS.ANALYTICS_PV, String(pageViews), {
+        metadata: { n: pageViews, t },
+      }),
+      this.kv.put(KV_KEYS.ANALYTICS_UPDATED, t),
     ];
     for (const [id, count] of Object.entries(analytics.linkClicks || {})) {
       const safeId = id.replace(/[^a-zA-Z0-9._:-]/g, "").slice(0, 64);
       if (!safeId) continue;
       keep.add(safeId);
+      const n = Math.max(0, Math.floor(count));
       ops.push(
-        this.kv.put(
-          `${KV_KEYS.ANALYTICS_CLICK_PREFIX}${safeId}`,
-          String(Math.max(0, Math.floor(count))),
-        ),
+        this.kv.put(`${KV_KEYS.ANALYTICS_CLICK_PREFIX}${safeId}`, String(n), {
+          metadata: { n, t },
+        }),
       );
     }
     let cursor: string | undefined;
@@ -348,6 +383,28 @@ export function createStore(kv: KVNamespace): BioStore {
 function rateLoginKey(ip: string): string {
   const safe = (ip || "unknown").replace(/[^a-zA-Z0-9:._-]/g, "_").slice(0, 80);
   return `${KV_KEYS.RATE_LOGIN_PREFIX}${safe}`;
+}
+
+type CounterMeta = { n?: number; t?: string };
+
+function counterValue(raw: string | null, metadata: CounterMeta | null | undefined): number {
+  if (metadata && typeof metadata.n === "number" && Number.isFinite(metadata.n) && metadata.n >= 0) {
+    return Math.floor(metadata.n);
+  }
+  return parseNonNegInt(raw, 0);
+}
+
+function maxIso(values: string[]): string | null {
+  let best: string | null = null;
+  let bestMs = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    const ms = Date.parse(value);
+    if (Number.isFinite(ms) && ms >= bestMs) {
+      bestMs = ms;
+      best = value;
+    }
+  }
+  return best;
 }
 
 function parseNonNegInt(raw: string | null, fallback: number): number {
@@ -411,7 +468,8 @@ export function sanitizeSettings(input: Partial<Settings> & { darkMode?: boolean
   // Keep empty so render can fall through to env.DEFAULT_THEME
   let themeId = str(input.theme, 40);
   if (themeId === "default" || themeId === "base") themeId = "aurora";
-  if (themeId === "old") themeId = "hono-old";
+  // "old" is not one of the built themes. Leave it unknown so resolveThemeId
+  // falls through to DEFAULT_THEME, then the registry fallback (aurora).
   if (themeId === "ios27") themeId = "liquid-glass";
 
   return {

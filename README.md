@@ -47,6 +47,7 @@
 - [数据模型（KV）](#数据模型kv)
 - [视觉主题](#视觉主题)
 - [目录结构](#目录结构)
+- [生产加固建议](#生产加固建议)
 - [贡献者](#贡献者)
 - [许可证](#许可证)
 
@@ -431,6 +432,15 @@ wrangler.toml
 open-next.config.ts
 README.md / README.en.md
 ```
+
+---
+
+## 生产加固建议
+
+应用内的登录限流仍是 KV 上的读改写，不是原子计数，保持现状。公网部署时建议在 Cloudflare 再加一层：
+
+- **WAF Rate limiting**（数值是示例，按自己的流量调整）：`POST /admin/login` 约 10 次/分钟/IP；`POST /api/click` 约 60 次/分钟/IP。
+- **可选**：用 [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/) 保护 `/admin*` 与 `/api/admin/*`，作为第二层认证。
 
 ---
 
