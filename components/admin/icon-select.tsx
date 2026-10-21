@@ -16,8 +16,8 @@ function applyCustomLabelTemplate(id: string, template?: string): string {
 function IconGlyph({ src, className, size = 20 }: { src: string; className?: string; size?: number }) {
   const isRemote = /^https?:\/\//i.test(src);
   if (isRemote) {
-    // eslint-disable-next-line @next/next/no-img-element
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         src={src}
         alt=""

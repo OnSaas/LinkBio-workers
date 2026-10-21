@@ -100,7 +100,6 @@ export default async function PublicPage() {
       {dynamicColorCss ? (
         <style
           id="theme-color-override"
-          // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: dynamicColorCss }}
         />
       ) : null}
