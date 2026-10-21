@@ -280,6 +280,9 @@ export async function deleteLinkAction(formData: FormData) {
   const store = await getStore();
   const links = (await store.getLinks()).filter((l) => l.id !== id);
   await store.setLinks(links.map((l, i) => ({ ...l, order: i })));
+  await store.deleteLinkClicks(id).catch(() => {
+    /* deleting the link still succeeds if the counter key cannot be removed */
+  });
   revalidatePublic();
   await scheduleBackup(store);
   await flashRedirect("/admin/links", flashOk(t("admin.links.deleted")));

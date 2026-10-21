@@ -6,6 +6,7 @@ import { SiteFooter } from "@/components/public/site-footer";
 import { ThemeToolbar } from "@/components/public/theme-toolbar";
 import { isAdminSession } from "@/lib/auth";
 import { getEnv, getStore, waitUntil } from "@/lib/env";
+import { isLikelyBot } from "@/lib/security";
 import { createT, htmlLang } from "@/lib/i18n";
 import { resolveColorMode, resolveLocale } from "@/lib/prefs";
 import { getTheme, resolveThemeId } from "@/lib/themes";
@@ -70,10 +71,12 @@ export default async function PublicPage() {
     store.getSettings(),
   ]);
 
-  await waitUntil(store.incrementPageViews());
-
   const jar = await cookies();
   const hdrs = await headers();
+  if (!isLikelyBot(hdrs)) {
+    await waitUntil(store.incrementPageViews());
+  }
+
   const cookieHeader = jar
     .getAll()
     .map((c) => `${c.name}=${encodeURIComponent(c.value)}`)

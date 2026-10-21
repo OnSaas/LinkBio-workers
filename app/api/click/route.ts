@@ -1,4 +1,5 @@
 import { getStore, waitUntil } from "@/lib/env";
+import { clickBodyTooLarge, isLikelyBot } from "@/lib/security";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,9 @@ async function readClickId(req: Request): Promise<string> {
 }
 
 export async function POST(req: Request) {
+  if (clickBodyTooLarge(req)) {
+    return Response.json({ error: "Body too large" }, { status: 400 });
+  }
   const id = await readClickId(req);
   if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
 
@@ -23,6 +27,8 @@ export async function POST(req: Request) {
     return Response.json({ error: "Unknown id" }, { status: 404 });
   }
 
-  await waitUntil(store.incrementLinkClick(id));
+  if (!isLikelyBot(req.headers)) {
+    await waitUntil(store.incrementLinkClick(id));
+  }
   return Response.json({ ok: true });
 }

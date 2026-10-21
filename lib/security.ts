@@ -37,6 +37,23 @@ export function validateCsrf(cookieToken: string | null, formToken: string | nul
   return out === 0;
 }
 
+export function clickBodyTooLarge(req: Request): boolean {
+  const raw = req.headers.get("content-length");
+  if (!raw) return false;
+  const len = Number(raw);
+  return Number.isFinite(len) && len > 1024;
+}
+
+const BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|headless/i;
+
+/** Skip page-view and click counting for crawlers, link previews, and prefetch. */
+export function isLikelyBot(headers: Headers): boolean {
+  const ua = headers.get("user-agent") || "";
+  if (BOT_UA.test(ua)) return true;
+  const purpose = `${headers.get("purpose") || ""} ${headers.get("sec-purpose") || ""}`.toLowerCase();
+  return purpose.includes("prefetch");
+}
+
 export function isSecureRequestFromHeaders(h: Headers): boolean {
   const proto = h.get("x-forwarded-proto");
   if (proto === "https") return true;
