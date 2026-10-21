@@ -73,8 +73,15 @@ export const SECURITY_HEADERS: Record<string, string> = {
     "img-src 'self' data: https: blob:",
     "font-src 'self' data:",
     "connect-src 'self'",
+    "object-src 'none'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
   ].join("; "),
 };
+
+export function securityHeaders(secure: boolean): Record<string, string> {
+  const headers: Record<string, string> = { ...SECURITY_HEADERS };
+  if (secure) headers["Strict-Transport-Security"] = "max-age=31536000";
+  return headers;
+}

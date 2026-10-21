@@ -47,6 +47,7 @@
 - [Data model (KV)](#data-model-kv)
 - [Visual themes](#visual-themes)
 - [Layout](#layout)
+- [Production hardening](#production-hardening)
 - [Contributors](#contributors)
 - [License](#license)
 
@@ -415,6 +416,15 @@ scripts/build-icons.mjs
 wrangler.toml
 README.md / README.en.md
 ```
+
+---
+
+## Production hardening
+
+In-app login limiting is still a read-modify-write on KV, not an atomic counter, and that behavior is unchanged. On a public deployment, add a layer in Cloudflare:
+
+- **WAF rate limiting** (example values; tune them for your traffic): about 10 requests/minute/IP for `POST /admin/login`, and about 60 requests/minute/IP for `POST /api/click`.
+- **Optional:** put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/) in front of `/admin*` and `/api/admin/*` as a second authentication layer.
 
 ---
 
