@@ -30,3 +30,6 @@ DEFAULT_THEME = "minimal"
 # Secrets (wrangler secret put ...):
 #   ADMIN_PASSWORD
 #   SESSION_SECRET
+
+[observability]
+enabled = true

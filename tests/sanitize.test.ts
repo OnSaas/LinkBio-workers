@@ -49,8 +49,8 @@ describe("sanitizeSettings", () => {
     expect(settings.darkMode).toBe(false);
   });
 
-  it("maps the legacy theme id old onto hono-old", () => {
-    expect(sanitizeSettings({ theme: "old" }).theme).toBe("hono-old");
+  it("keeps the unknown legacy theme id old for resolveThemeId to fall through", () => {
+    expect(sanitizeSettings({ theme: "old" }).theme).toBe("old");
   });
 });
 

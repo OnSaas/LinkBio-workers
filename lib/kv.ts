@@ -468,7 +468,8 @@ export function sanitizeSettings(input: Partial<Settings> & { darkMode?: boolean
   // Keep empty so render can fall through to env.DEFAULT_THEME
   let themeId = str(input.theme, 40);
   if (themeId === "default" || themeId === "base") themeId = "aurora";
-  if (themeId === "old") themeId = "hono-old";
+  // "old" is not one of the built themes. Leave it unknown so resolveThemeId
+  // falls through to DEFAULT_THEME, then the registry fallback (aurora).
   if (themeId === "ios27") themeId = "liquid-glass";
 
   return {

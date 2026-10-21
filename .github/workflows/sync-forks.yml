@@ -4,6 +4,8 @@
 # fork repositories to keep them in sync.
 #
 # Setup:
+#   Prefer a fine-grained PAT with Contents read and write on the fork repository
+#   only. A classic PAT with the `repo` scope also works, and is broader than needed.
 #   1. Create a Personal Access Token (classic) with `repo` scope.
 #   2. Add it as a repository secret: FORK_SYNC_TOKEN
 #   3. Add the fork owner as a repository variable: FORK_OWNER (e.g. "my-org")
