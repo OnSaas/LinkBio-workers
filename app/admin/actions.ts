@@ -13,6 +13,7 @@ import {
 import { getAdminUi } from "@/lib/admin-ui";
 import { translateBackupError } from "@/lib/backup-i18n";
 import { isAdminSession } from "@/lib/auth";
+import { getRequestPrefs, getSettings } from "@/lib/data";
 import { getEnv, getStore } from "@/lib/env";
 import { flashErr, flashOk, setFlashCookie } from "@/lib/flash";
 import { createT } from "@/lib/i18n";
@@ -23,7 +24,6 @@ import {
   sanitizeSettings,
   stripForbiddenSecrets,
 } from "@/lib/kv";
-import { resolveLocale } from "@/lib/prefs";
 import {
   constantTimeEqual,
   createSessionToken,
@@ -44,19 +44,8 @@ async function tSite() {
     const ui = await getAdminUi();
     return ui.t;
   } catch {
-    const store = await getStore();
-    const settings = await store.getSettings();
-    const jar = await cookies();
-    const hdrs = await headers();
-    const cookieHeader = jar
-      .getAll()
-      .map((c) => `${c.name}=${encodeURIComponent(c.value)}`)
-      .join("; ");
-    const { locale } = resolveLocale(
-      cookieHeader,
-      hdrs.get("accept-language") || undefined,
-      settings.locale,
-    );
+    const settings = await getSettings();
+    const { locale } = await getRequestPrefs(settings);
     return createT(locale);
   }
 }

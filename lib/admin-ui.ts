@@ -1,23 +1,9 @@
-import { cookies, headers } from "next/headers";
-import { getEnv, getStore } from "@/lib/env";
+import { getEnv, getRequestPrefs, getSettings, getStore } from "@/lib/data";
 import { createT, type TranslateFn } from "@/lib/i18n";
-import {
-  resolveColorMode,
-  resolveLocale,
-  type LocalePref,
-} from "@/lib/prefs";
+import type { LocalePref } from "@/lib/prefs";
 import type { ColorMode, Locale, Settings } from "@/lib/types";
 import type { BioStore } from "@/lib/kv";
 import type { CloudflareEnv } from "@/lib/env";
-
-function cookieHeaderFromJar(
-  jar: Awaited<ReturnType<typeof cookies>>,
-): string {
-  return jar
-    .getAll()
-    .map((c) => `${c.name}=${encodeURIComponent(c.value)}`)
-    .join("; ");
-}
 
 /**
  * Shared admin SSR context: locale/color respect visitor cookies (same as public toolbar).
@@ -35,16 +21,8 @@ export async function getAdminUi(): Promise<{
 }> {
   const store = await getStore();
   const env = await getEnv();
-  const settings = await store.getSettings();
-  const jar = await cookies();
-  const hdrs = await headers();
-  const cookieHeader = cookieHeaderFromJar(jar);
-  const colorMode = resolveColorMode(cookieHeader, settings.colorMode);
-  const { pref: localePref, locale } = resolveLocale(
-    cookieHeader,
-    hdrs.get("accept-language") || undefined,
-    settings.locale,
-  );
+  const settings = await getSettings();
+  const { cookieHeader, colorMode, localePref, locale } = await getRequestPrefs(settings);
   const t = createT(locale);
   return {
     store,

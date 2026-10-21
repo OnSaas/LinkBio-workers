@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import "./globals.css";
-import { getEnv, getStore } from "@/lib/env";
+import { getEnv, getRequestPrefs, getSettings } from "@/lib/data";
 import { htmlLang } from "@/lib/i18n";
-import { COLOR_COOKIE, parseColorMode, resolveColorMode, resolveLocale } from "@/lib/prefs";
+import { COLOR_COOKIE, parseColorMode } from "@/lib/prefs";
 import { resolveThemeId } from "@/lib/themes";
 
 export const dynamic = "force-dynamic";
@@ -20,28 +20,23 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const jar = await cookies();
-  const hdrs = await headers();
-  const cookieHeader = jar
-    .getAll()
-    .map((c) => `${c.name}=${encodeURIComponent(c.value)}`)
-    .join("; ");
-
-  let dataTheme = parseColorMode(jar.get(COLOR_COOKIE)?.value) || "system";
+  let dataTheme: "system" | "light" | "dark" = "system";
   let lang = "zh-CN";
   let themeId = "minimal";
 
   try {
-    const store = await getStore();
+    const jar = await cookies();
+    dataTheme = parseColorMode(jar.get(COLOR_COOKIE)?.value) || "system";
+  } catch {
+    /* cookies unavailable */
+  }
+
+  try {
     const env = await getEnv();
-    const settings = await store.getSettings();
-    dataTheme = resolveColorMode(cookieHeader, settings.colorMode);
-    const { locale } = resolveLocale(
-      cookieHeader,
-      hdrs.get("accept-language") || undefined,
-      settings.locale,
-    );
-    lang = htmlLang(locale);
+    const settings = await getSettings();
+    const prefs = await getRequestPrefs(settings);
+    dataTheme = prefs.colorMode;
+    lang = htmlLang(prefs.locale);
     themeId = resolveThemeId(settings.theme, env.DEFAULT_THEME);
   } catch {
     /* keep defaults when KV unavailable (e.g. edge edge-cases) */
