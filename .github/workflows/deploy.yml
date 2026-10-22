@@ -59,16 +59,47 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Inject KV ids
+      - name: Inject KV ids and site URL
         env:
           BIO_KV_ID: ${{ vars.BIO_KV_ID || secrets.BIO_KV_ID }}
           BIO_KV_PREVIEW_ID: ${{ vars.BIO_KV_PREVIEW_ID || secrets.BIO_KV_PREVIEW_ID }}
         run: |
           set -euo pipefail
-          test -n "${BIO_KV_ID:-}" || { echo "BIO_KV_ID missing"; exit 1; }
-          PREVIEW="${BIO_KV_PREVIEW_ID:-$BIO_KV_ID}"
-          sed -i "s/REPLACE_WITH_YOUR_KV_NAMESPACE_ID/${BIO_KV_ID}/" wrangler.toml
-          sed -i "s/REPLACE_WITH_YOUR_KV_PREVIEW_ID/${PREVIEW}/" wrangler.toml
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json")
+          kv_id="${BIO_KV_ID:-}"
+          if [[ -z "$kv_id" ]]; then
+            page=1
+            while [[ "$page" -le 10 ]]; do
+              list=$(curl -fsS "${auth[@]}" "$api/storage/kv/namespaces?per_page=100&page=$page")
+              echo "$list" | jq -e '.success == true' >/dev/null
+              found=$(echo "$list" | jq -r '.result[] | select(.title=="linkbio-workers") | .id' | head -1)
+              if [[ -n "$found" ]]; then
+                kv_id="$found"
+                break
+              fi
+              count=$(echo "$list" | jq '.result | length')
+              [[ "$count" -lt 100 ]] && break
+              page=$((page + 1))
+            done
+          fi
+          if [[ -z "$kv_id" ]]; then
+            created=$(curl -fsS "${auth[@]}" -X POST "$api/storage/kv/namespaces" --data '{"title":"linkbio-workers"}')
+            echo "$created" | jq -e '.success == true' >/dev/null
+            kv_id=$(echo "$created" | jq -r '.result.id')
+          fi
+          [[ -n "$kv_id" && "$kv_id" != "null" ]]
+          preview="${BIO_KV_PREVIEW_ID:-$kv_id}"
+          sed -i "s/REPLACE_WITH_YOUR_KV_NAMESPACE_ID/${kv_id}/" wrangler.toml
+          sed -i "s/REPLACE_WITH_YOUR_KV_PREVIEW_ID/${preview}/" wrangler.toml
+          sub=$(curl -fsS "${auth[@]}" "$api/workers/subdomain" | jq -r '.result.subdomain // empty')
+          if [[ -n "$sub" ]]; then
+            site_url="https://linkbio-workers.${sub}.workers.dev"
+            sed -i "s|https://YOUR_SUBDOMAIN.workers.dev|${site_url}|" wrangler.toml
+            echo "SITE_URL=${site_url}"
+          else
+            echo "workers.dev subdomain is unset; SITE_URL stays the placeholder"
+          fi
 
       - name: Build worker
         run: npm run build:worker
